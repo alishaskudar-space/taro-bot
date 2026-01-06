@@ -195,8 +195,8 @@ def get_main_menu() -> ReplyKeyboardMarkup:
 
 def get_paywall_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🪄 Купить 5 гаданий — $2.99", callback_data="buy_pack_5")],
-        [InlineKeyboardButton(text="🔮 Купить 10 гаданий + 🪐 — $4.99", callback_data="buy_pack_10")],
+        [InlineKeyboardButton(text="🪄 Купить 5 гаданий — 99 грн", callback_data="buy_pack_5")],
+        [InlineKeyboardButton(text="🔮 Купить 10 гаданий + 🪐 — 199 грн", callback_data="buy_pack_10")],
         [InlineKeyboardButton(text="🔙 Вернуться в меню", callback_data="back_menu")],
     ])
 
