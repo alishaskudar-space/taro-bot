@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import random
+import time
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, types
@@ -20,7 +21,7 @@ from aiogram.types import (
 # ENV
 # =========================
 API_TOKEN = os.getenv("BOT_TOKEN")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")  # token from @BotFather after connecting Portmone
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")  # provider token from @BotFather (Portmone TEST/Live)
 
 if not API_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
@@ -33,6 +34,19 @@ dp = Dispatcher()
 CARDS_FOLDER = "cards"
 
 # =========================
+# DISCLAIMER (UA)
+# =========================
+DISCLAIMER_TEXT = (
+    "📜 *Дисклеймер*\n\n"
+    "🪄 Відповіді цього бота мають *розважальний та ігровий характер* і є "
+    "*суб’єктивною інтерпретацією випадково обраних символів/карт*.\n\n"
+    "Це *не є* достовірним прогнозом майбутнього, гарантією результатів або "
+    "професійною консультацією.\n\n"
+    "❗️Бот *не надає* юридичних, медичних чи фінансових порад.\n"
+    "Рішення ви приймаєте самостійно."
+)
+
+# =========================
 # PAYWALL / PACKS
 # =========================
 FREE_READINGS = 3
@@ -40,50 +54,53 @@ STATE_PATH = Path(os.getenv("STATE_PATH", "users_state.json"))
 _state_lock = asyncio.Lock()
 _state: dict[str, dict] = {}  # user_id(str) -> {"free_used": int, "credits": int, "natal": bool}
 
-# Важно: Portmone может требовать UAH. Ты просила $ — ставлю USD.
-# Если invoice не создаётся, поменяй CURRENCY="UAH" и цены в копейках гривны.
+# Portmone зазвичай працює з UAH у Telegram Payments
 CURRENCY = "UAH"
 
 PACKS = {
     "pack_5": {
-        "title": "🪄 Купить 5 гаданий",
-        "description": "✨ Пять гаданий — и я открою тебе больше знаков, чем видят обычные глаза.\n"
-                       "Подходит, чтобы проверять чувства, планы и исходы — без ожидания.",
+        "title": "🪄 Пакет «5 ворожінь»",
+        "description": (
+            "✨ П’ять ворожінь — і я відкрию тобі більше знаків, ніж бачать звичайні очі.\n"
+            "Ідеально, щоб швидко перевіряти почуття, плани та можливі розв’язки."
+        ),
         "credits": 5,
-        "amount": 9900,  # cents
-        "label": "5 гаданий",
+        "amount": 299,  # 2.99 UAH (копійки)
+        "label": "5 ворожінь",
+        "natal": False,
     },
     "pack_10_natal": {
-        "title": "🔮 Купить 10 гаданий + Натальная карта",
-        "description": "🌙 Десять гаданий + доступ к «Натальной карте».\n"
-                       "Я посмотрю не только в арканы — но и в твой небесный код.",
+        "title": "🔮 Пакет «10 ворожінь + 🪐 Натальна карта»",
+        "description": (
+            "🌙 Десять ворожінь + доступ до «Натальної карти».\n"
+            "Я подивлюся не лише на карти — а й на твій небесний код."
+        ),
         "credits": 10,
-        "amount": 19900,  # cents
-        "label": "10 гаданий + Натальная карта",
+        "amount": 499,  # 4.99 UAH (копійки)
+        "label": "10 ворожінь + Натальна карта",
         "natal": True,
     },
 }
 
-
 # =========================
-# TAROT CONTENT
+# TAROT CONTENT (UA)
 # =========================
 MEANINGS = {
     "00": {
-        "up": "Дурак открывает дверь в новую главу твоей судьбы, полную возможностей. Доверься потоку — он ведёт тебя туда, где случается чудо.",
-        "rev": "Ты боишься шагнуть в неизвестность или действуешь слишком импульсивно. Замедлись, проверь опору — и сделай ход осознанно.",
+        "up": "Дурень відчиняє двері в новий розділ твоєї історії. Довірся потоку — він веде туди, де народжується диво.",
+        "rev": "Ти боїшся кроку в невідоме або дієш надто імпульсивно. Сповільнись, перевір опору — і зроби хід усвідомлено.",
     },
     "01": {
-        "up": "Маг напоминает: у тебя уже есть всё, чтобы создать желаемое. Сфокусируй волю — и реальность начнёт отвечать.",
-        "rev": "Сомнения или хаос распыляют силу. Собери энергию в одну точку — и перестань отдавать власть страхам и чужим словам.",
+        "up": "Маг нагадує: у тебе вже є все, щоб створити бажане. Сфокусуй волю — і реальність почне відповідати.",
+        "rev": "Сумніви або хаос розпорошують силу. Збери енергію в одну точку — і не віддавай владу страхам.",
     },
     "02": {
-        "up": "Верховная Жрица приподнимает завесу: ответ внутри тебя. Доверься интуиции и тишине — там живёт правда.",
-        "rev": "Ты игнорируешь знаки или слишком спешишь. Пауза сейчас — это не остановка, а ключ к верному решению.",
+        "up": "Верховна Жриця піднімає завісу: відповідь всередині тебе. Довірся інтуїції та тиші — там живе правда.",
+        "rev": "Ти ігноруєш знаки або поспішаєш. Пауза зараз — не зупинка, а ключ до правильного рішення.",
     },
 }
 
-NAMES = {"00": "0. Дурак", "01": "I. Маг", "02": "II. Верховная Жрица"}
+NAMES = {"00": "0. Дурень", "01": "I. Маг", "02": "II. Верховна Жриця"}
 
 
 # =========================
@@ -139,10 +156,42 @@ async def add_credits(user_id: int, credits: int, natal: bool = False) -> dict:
     return await get_user_state(user_id)
 
 
+def get_main_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+        [KeyboardButton(text="🔮 Одна карта — порада долі")],
+        [KeyboardButton(text="🃏 Три карти — шлях душі")],
+        [KeyboardButton(text="✨ Кельтський хрест — повне ворожіння")],
+        [KeyboardButton(text="❓ Так / Ні — швидка відповідь")],
+        [KeyboardButton(text="🪐 Натальна карта")],
+        [KeyboardButton(text="💳 Купити ворожіння")],
+        [KeyboardButton(text="📜 Дисклеймер")],
+    ])
+
+
+def get_paywall_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🪄 Купити 5 ворожінь — 2.99 ₴", callback_data="buy_pack_5")],
+        [InlineKeyboardButton(text="🔮 Купити 10 ворожінь + 🪐 — 4.99 ₴", callback_data="buy_pack_10")],
+        [InlineKeyboardButton(text="📜 Дисклеймер", callback_data="show_disclaimer")],
+        [InlineKeyboardButton(text="🔙 Назад у меню", callback_data="back_menu")],
+    ])
+
+
+def get_disclaimer_confirm_kb(pack_key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Погоджуюсь і перейти до оплати", callback_data=f"confirm_{pack_key}")],
+        [InlineKeyboardButton(text="📜 Показати дисклеймер ще раз", callback_data="show_disclaimer")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="back_menu")],
+    ])
+
+
+# =========================
+# PAYWALL LOGIC
+# =========================
 async def consume_reading_or_block(message: types.Message) -> bool:
     """
-    True -> можно гадать (списали 1 бесплатное или 1 кредит)
-    False -> заблокировали и показали продажный текст + кнопки оплаты
+    True -> можна ворожити (списали 1 безкоштовне або 1 кредит)
+    False -> показали paywall
     """
     user_id = message.from_user.id
     uid = str(user_id)
@@ -169,36 +218,14 @@ async def consume_reading_or_block(message: types.Message) -> bool:
         return True
 
     await message.answer(
-        "🧙‍♂️✨ *Стой, искатель тайн!* ✨\n\n"
-        "Три бесплатных гадания уже исчерпаны — арканы требуют энергию для новых откровений.\n\n"
-        "🔮 Хочешь продолжить *без ожидания* и получать больше подсказок судьбы?\n"
-        "Выбери пакет ниже — и я открою тебе следующий слой магии:",
+        "🧙‍♂️✨ *Стій, шукачу таємниць!* ✨\n\n"
+        f"Ти вже використав(ла) *{FREE_READINGS}* безкоштовні ворожіння.\n"
+        "Щоб я міг відкрити наступний шар підказок долі — потрібна енергія обміну.\n\n"
+        "🔮 Обери пакунок нижче — і я продовжу читати знаки для тебе:",
         parse_mode="Markdown",
         reply_markup=get_paywall_kb(),
     )
     return False
-
-
-# =========================
-# UI
-# =========================
-def get_main_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-        [KeyboardButton(text="🔮 Одна карта — совет судьбы")],
-        [KeyboardButton(text="🃏 Три карты — путь души")],
-        [KeyboardButton(text="✨ Кельтский крест — полное гадание")],
-        [KeyboardButton(text="❓ Да / Нет — быстрый ответ")],
-        [KeyboardButton(text="🪐 Натальная карта")],
-        [KeyboardButton(text="💳 Купить гадания")],
-    ])
-
-
-def get_paywall_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🪄 Купить 5 гаданий — 99 грн", callback_data="buy_pack_5")],
-        [InlineKeyboardButton(text="🔮 Купить 10 гаданий + 🪐 — 199 грн", callback_data="buy_pack_10")],
-        [InlineKeyboardButton(text="🔙 Вернуться в меню", callback_data="back_menu")],
-    ])
 
 
 # =========================
@@ -215,7 +242,7 @@ async def send_pack_invoice(chat_id: int, pack_key: str) -> None:
         chat_id=chat_id,
         title=pack["title"],
         description=pack["description"],
-        payload=pack_key,  # вернётся в successful_payment.invoice_payload
+        payload=pack_key,  # повернеться в successful_payment.invoice_payload
         provider_token=PROVIDER_TOKEN,
         currency=CURRENCY,
         prices=prices,
@@ -234,32 +261,25 @@ async def successful_payment(message: types.Message):
     payload = sp.invoice_payload
     user_id = message.from_user.id
 
-    if payload == "pack_5":
-        st = await add_credits(user_id, credits=PACKS["pack_5"]["credits"], natal=False)
+    if payload in PACKS:
+        pack = PACKS[payload]
+        st = await add_credits(user_id, credits=pack["credits"], natal=pack.get("natal", False))
+
+        total = sp.total_amount / 100
+        natal_txt = "\n🪐 *Натальна карта* відкрита." if pack.get("natal", False) else ""
+
         await message.answer(
-            "✅✨ *Магия приняла платёж!* ✨\n\n"
-            f"🎴 Начислено: *{PACKS['pack_5']['credits']} гаданий*\n"
-            f"📿 Остаток: *{st['credits']}*\n\n"
-            "Скажи… что хочешь узнать первым? 🔮",
+            "✅✨ *Оплату прийнято! Магія активована.* ✨\n\n"
+            f"💳 Сума: *{total:.2f} {sp.currency}*\n"
+            f"🎴 Нараховано: *{pack['credits']} ворожінь*{natal_txt}\n"
+            f"📿 Баланс ворожінь: *{st['credits']}*\n\n"
+            "Скажи… з чого почнемо? 🔮",
             parse_mode="Markdown",
             reply_markup=get_main_menu(),
         )
         return
 
-    if payload == "pack_10_natal":
-        st = await add_credits(user_id, credits=PACKS["pack_10_natal"]["credits"], natal=True)
-        await message.answer(
-            "✅🌙 *Сделка с судьбой заключена!* 🌙\n\n"
-            f"🎴 Начислено: *{PACKS['pack_10_natal']['credits']} гаданий*\n"
-            "🪐 *Натальная карта* теперь доступна.\n"
-            f"📿 Остаток: *{st['credits']}*\n\n"
-            "Прикажи — и я начну. 🧙‍♂️✨",
-            parse_mode="Markdown",
-            reply_markup=get_main_menu(),
-        )
-        return
-
-    await message.answer("✅ Платёж получен. Если что-то не активировалось — напиши /start.")
+    await message.answer("✅ Оплату отримано. Якщо доступ не активувався — напиши /start.")
 
 
 # =========================
@@ -267,9 +287,9 @@ async def successful_payment(message: types.Message):
 # =========================
 async def ritual_delay(message: types.Message):
     await message.answer(
-        "Сосредоточься на вопросе…\n"
-        "Дыши глубоко.\n"
-        "Колода шепчет в темноте… ✨"
+        "Зосередься на своєму питанні…\n"
+        "Зроби вдих. І ще один.\n"
+        "Колода шепоче у темряві… ✨"
     )
     await asyncio.sleep(2)
 
@@ -286,21 +306,39 @@ async def start(message: types.Message):
     st = await get_user_state(message.from_user.id)
     free_left = max(0, FREE_READINGS - int(st.get("free_used", 0)))
     credits = int(st.get("credits", 0))
+    natal = bool(st.get("natal", False))
 
     await message.answer(
-        "✨ Я — маг-таролог. Слушаю твой вопрос и читаю знаки судьбы… 🧙‍♂️🔮\n\n"
-        f"🎁 Бесплатных гаданий осталось: *{free_left}* из {FREE_READINGS}\n"
-        f"📿 Платных гаданий на балансе: *{credits}*\n\n"
-        "Выбери ритуал:",
+        "✨ Я — маг-таролог. Я слухаю твоє питання і читаю знаки… 🧙‍♂️🔮\n\n"
+        f"🎁 Безкоштовних ворожінь залишилось: *{free_left}* із {FREE_READINGS}\n"
+        f"📿 Платних ворожінь на балансі: *{credits}*\n"
+        f"🪐 Натальна карта: *{'доступна' if natal else 'закрита'}*\n\n"
+        "Обери ритуал:",
         parse_mode="Markdown",
         reply_markup=get_main_menu(),
     )
 
 
-@dp.message(F.text == "💳 Купить гадания")
+@dp.message(Command("disclaimer"))
+async def disclaimer_cmd(message: types.Message):
+    await message.answer(DISCLAIMER_TEXT, parse_mode="Markdown")
+
+
+@dp.message(F.text == "📜 Дисклеймер")
+async def disclaimer_btn(message: types.Message):
+    await message.answer(DISCLAIMER_TEXT, parse_mode="Markdown")
+
+
+@dp.callback_query(F.data == "show_disclaimer")
+async def cb_show_disclaimer(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(DISCLAIMER_TEXT, parse_mode="Markdown")
+
+
+@dp.message(F.text == "💳 Купити ворожіння")
 async def show_paywall(message: types.Message):
     await message.answer(
-        "🧙‍♂️💫 *Выбери артефакт доступа:*",
+        "🧙‍♂️💫 *Обери пакунок сили:*",
         parse_mode="Markdown",
         reply_markup=get_paywall_kb(),
     )
@@ -309,42 +347,57 @@ async def show_paywall(message: types.Message):
 @dp.callback_query(F.data == "buy_pack_5")
 async def cb_buy_pack_5(callback: types.CallbackQuery):
     await callback.answer()
-    await send_pack_invoice(chat_id=callback.message.chat.id, pack_key="pack_5")
+    await callback.message.answer(
+        DISCLAIMER_TEXT + "\n\n✅ Якщо все зрозуміло — можеш продовжити до оплати:",
+        parse_mode="Markdown",
+        reply_markup=get_disclaimer_confirm_kb("pack_5"),
+    )
 
 
 @dp.callback_query(F.data == "buy_pack_10")
 async def cb_buy_pack_10(callback: types.CallbackQuery):
     await callback.answer()
-    await send_pack_invoice(chat_id=callback.message.chat.id, pack_key="pack_10_natal")
+    await callback.message.answer(
+        DISCLAIMER_TEXT + "\n\n✅ Якщо все зрозуміло — можеш продовжити до оплати:",
+        parse_mode="Markdown",
+        reply_markup=get_disclaimer_confirm_kb("pack_10_natal"),
+    )
+
+
+@dp.callback_query(F.data.startswith("confirm_"))
+async def cb_confirm_buy(callback: types.CallbackQuery):
+    await callback.answer()
+    pack_key = callback.data.replace("confirm_", "", 1)
+    await send_pack_invoice(chat_id=callback.message.chat.id, pack_key=pack_key)
 
 
 @dp.callback_query(F.data == "back_menu")
 async def cb_back_menu(callback: types.CallbackQuery):
     await callback.answer()
-    await callback.message.answer("🔙 Возвращаю в меню…", reply_markup=get_main_menu())
+    await callback.message.answer("🔙 Повертаю в меню…", reply_markup=get_main_menu())
 
 
-@dp.message(F.text == "🪐 Натальная карта")
+@dp.message(F.text == "🪐 Натальна карта")
 async def natal_chart(message: types.Message):
     st = await get_user_state(message.from_user.id)
     if not st.get("natal", False):
         await message.answer(
-            "🪐🔒 *Натальная карта* закрыта печатью звёзд.\n\n"
-            "Открою её только тем, кто усилил свой путь пакетом:\n"
-            "🔮 *10 гаданий + Натальная карта* — и я расшифрую твой небесный код ✨",
+            "🪐🔒 *Натальна карта* зараз закрита печаттю зірок.\n\n"
+            "Відкрию її тим, хто обере пакунок:\n"
+            "🔮 *10 ворожінь + 🪐 Натальна карта* — і я розшифрую твій небесний код ✨",
             parse_mode="Markdown",
             reply_markup=get_paywall_kb(),
         )
         return
 
     await message.answer(
-        "🪐✨ *Натальная карта активна!*\n\n"
-        "Пока это раздел-заготовка. Следующий шаг: спросить дату, время и место рождения — и построить интерпретацию.",
+        "🪐✨ *Натальна карта активна!*\n\n"
+        "Наступний крок: я попрошу дату, час і місце народження — і складу інтерпретацію.",
         parse_mode="Markdown",
     )
 
 
-@dp.message(F.text == "🔮 Одна карта — совет судьбы")
+@dp.message(F.text == "🔮 Одна карта — порада долі")
 async def one_card(message: types.Message):
     if not await consume_reading_or_block(message):
         return
@@ -354,9 +407,9 @@ async def one_card(message: types.Message):
     emoji = "✨" if orient == "up" else "🌙"
 
     caption = (
-        f"{emoji} *{NAMES[code]}* {'(прямое)' if orient == 'up' else '(перевёрнутое)'}\n\n"
+        f"{emoji} *{NAMES[code]}* {'(пряма)' if orient == 'up' else '(перевернута)'}\n\n"
         f"{MEANINGS[code][orient]}\n\n"
-        "Дыши. Ответ уже течёт к тебе."
+        "Дихай. Відповідь уже поруч."
     )
 
     if os.path.exists(path):
@@ -365,7 +418,7 @@ async def one_card(message: types.Message):
         await message.answer(caption, parse_mode="Markdown")
 
 
-@dp.message(F.text == "🃏 Три карты — путь души")
+@dp.message(F.text == "🃏 Три карти — шлях душі")
 async def three_cards(message: types.Message):
     if not await consume_reading_or_block(message):
         return
@@ -374,14 +427,14 @@ async def three_cards(message: types.Message):
 
     cards = [get_random_card() for _ in range(3)]
     media = []
-    text = "*Три карты — путь души*\n\n"
-    positions = ["🕰 Прошлое", "🌟 Настоящее", "🔮 Будущее"]
+    text = "*Три карти — шлях душі*\n\n"
+    positions = ["🕰 Минуле", "🌟 Теперішнє", "🔮 Майбутнє"]
 
     for i, (code, orient, path) in enumerate(cards):
         emoji = "✨" if orient == "up" else "🌙"
         text += (
             f"{positions[i]}\n"
-            f"{emoji} *{NAMES[code]}* {'(прямое)' if orient == 'up' else '(перевёрнутое)'}\n"
+            f"{emoji} *{NAMES[code]}* {'(пряма)' if orient == 'up' else '(перевернута)'}\n"
             f"{MEANINGS[code][orient]}\n\n"
         )
         if os.path.exists(path):
@@ -390,39 +443,39 @@ async def three_cards(message: types.Message):
     if media:
         await message.answer_media_group(media)
 
-    await message.answer(text + "Три нити сплелись. Судьба уже двигается…", parse_mode="Markdown")
+    await message.answer(text + "Три нитки сплелись… шлях уже змінюється ✨", parse_mode="Markdown")
 
 
-@dp.message(F.text == "✨ Кельтский крест — полное гадание")
+@dp.message(F.text == "✨ Кельтський хрест — повне ворожіння")
 async def celtic_cross(message: types.Message):
     if not await consume_reading_or_block(message):
         return
 
     await ritual_delay(message)
     await message.answer(
-        "*Кельтский крест*\n\n"
-        "Скоро здесь будет полное гадание на 10 карт. Пока — почувствуй энергию расклада ✨",
+        "*Кельтський хрест*\n\n"
+        "Невдовзі тут буде повний розклад на 10 карт. А поки — відчуй енергію розкладу ✨",
         parse_mode="Markdown",
     )
 
 
-@dp.message(F.text == "❓ Да / Нет — быстрый ответ")
+@dp.message(F.text == "❓ Так / Ні — швидка відповідь")
 async def yes_no(message: types.Message):
     if not await consume_reading_or_block(message):
         return
 
     await ritual_delay(message)
     answers = [
-        "✅ Да. Арканы говорят ясно.",
-        "❌ Нет. Дверь сейчас закрыта — не ломись в неё.",
-        "❓ Возможно. Если изменишь курс — шанс появится.",
+        "✅ Так. Аркани говорять чітко.",
+        "❌ Ні. Двері зараз зачинені — не ламай їх.",
+        "❓ Можливо. Якщо зміниш курс — шанс з’явиться.",
     ]
     await message.answer(random.choice(answers))
 
 
 async def main():
     await load_state()
-    print("🧙‍♂️ Бот готов к ритуалу…")
+    print("🧙‍♂️ Бот готовий до ритуалу…")
     await dp.start_polling(bot)
 
 
