@@ -7,6 +7,7 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
+from aiogram.filters import BaseFilter
 from aiogram.types import (
     FSInputFile,
     KeyboardButton,
@@ -50,6 +51,86 @@ async def cmd_grant_me(message: types.Message):
         return
     st = await add_credits(uid, credits=999, natal=True)
     await message.answer(f"✅ Test access granted\ncredits={st['credits']}\nnatal={st['natal']}")
+class PendingKind(BaseFilter):
+    def __init__(self, kind: str):
+        self.kind = kind
+
+    async def __call__(self, message: types.Message) -> bool:
+        st = await get_user_state(message.from_user.id)
+        p = st.get("pending")
+        return isinstance(p, dict) and p.get("kind") == self.kind
+
+
+async def set_pending(user_id: int, kind: str) -> None:
+    uid = str(user_id)
+    async with _state_lock:
+        if uid not in _state:
+            _state[uid] = _default_user_state()
+        _state[uid]["pending"] = {"kind": kind, "ts": int(time.time())}
+    await save_state()
+
+
+async def clear_pending(user_id: int) -> None:
+    uid = str(user_id)
+    async with _state_lock:
+        if uid not in _state:
+            _state[uid] = _default_user_state()
+        _state[uid]["pending"] = None
+    await save_state()
+
+
+def can_start_reading(st: dict) -> bool:
+    credits = int(st.get("credits", 0))
+    free_used = int(st.get("free_used", 0))
+    return credits > 0 or free_used < FREE_READINGS
+
+
+ASK_QUESTION_KB = ReplyKeyboardMarkup(
+    resize_keyboard=True,
+    keyboard=[[KeyboardButton(text="❌ Скасувати")]],
+)
+
+CELTIC_CROSS_POSITIONS = [
+    "1️⃣ *Серце питання (теперішнє)*",
+    "2️⃣ *Перехрестя (виклик)*",
+    "3️⃣ *Корінь (підсвідоме)*",
+    "4️⃣ *Минуле (позаду)*",
+    "5️⃣ *Свідоме / ціль*",
+    "6️⃣ *Найближче майбутнє*",
+    "7️⃣ *Ти в ситуації*",
+    "8️⃣ *Оточення / впливи*",
+    "9️⃣ *Надії та страхи*",
+    "🔟 *Ймовірний підсумок*",
+]
+
+
+def md_escape(s: str) -> str:
+    # для parse_mode="Markdown"
+    return (
+        s.replace("\\", "\\\\")
+        .replace("*", "\\*")
+        .replace("_", "\\_")
+        .replace("`", "\\`")
+        .replace("[", "\\[")
+    )
+
+
+def draw_unique_cards(n: int):
+    # безопасно: если колода маленькая — не зависаем
+    drawn = []
+    seen = set()
+    attempts = 0
+    while len(drawn) < n and attempts < 500:
+        code, orient, path = get_random_card()
+        attempts += 1
+        if code in seen:
+            continue
+        seen.add(code)
+        drawn.append((code, orient, path))
+    # если не удалось добрать уникальные — добиваем любыми
+    while len(drawn) < n:
+        drawn.append(get_random_card())
+    return drawn
 
 
 @dp.message(Command("reset_me"))
@@ -521,7 +602,8 @@ ALL_CODES = list(NAMES.keys())
 # STATE HELPERS
 # =========================
 def _default_user_state() -> dict:
-    return {"free_used": 0, "credits": 0, "natal": False}
+    return {"free_used": 0, "credits": 0, "natal": False, "pending": None}
+
 
 
 def _load_state_sync() -> dict[str, dict]:
@@ -879,16 +961,80 @@ async def three_cards(message: types.Message):
 
 
 @dp.message(F.text == "✨ Кельтський хрест — повне ворожіння")
-async def celtic_cross(message: types.Message):
+@dp.message(F.text == "✨ Кельтський хрест — повне ворожіння")
+async def celtic_cross_start(message: types.Message):
+    st = await get_user_state(message.from_user.id)
+
+    if not can_start_reading(st):
+        await message.answer(
+            "🔒 Щоб зробити *Кельтський хрест*, потрібне ворожіння на балансі.\n"
+            "Обери пакет нижче 👇",
+            parse_mode="Markdown",
+            reply_markup=get_paywall_kb(),
+        )
+        return
+
+    await set_pending(message.from_user.id, "celtic_cross")
+    await message.answer(
+        "✨ *Кельтський хрест*\n\n"
+        "Напиши свій запит одним повідомленням.\n"
+        "Приклад: _Що мене чекає в роботі протягом найближчого місяця?_\n\n"
+        "Щоб скасувати — натисни *❌ Скасувати*.",
+        parse_mode="Markdown",
+        reply_markup=ASK_QUESTION_KB,
+    )
+@dp.message(PendingKind("celtic_cross"), F.text == "❌ Скасувати")
+async def celtic_cross_cancel(message: types.Message):
+    await clear_pending(message.from_user.id)
+    await message.answer("Добре, скасувала ✅", reply_markup=get_main_menu())
+
+
+@dp.message(PendingKind("celtic_cross"), F.text)
+async def celtic_cross_question(message: types.Message):
+    question = (message.text or "").strip()
+    if not question:
+        return await message.answer("Напиши запит текстом 🙂", reply_markup=ASK_QUESTION_KB)
+
+    # очистили pending сразу, чтобы не зациклиться
+    await clear_pending(message.from_user.id)
+
+    # теперь реально списываем (бесплатное/кредит) и делаем расклад
     if not await consume_reading_or_block(message):
+        await message.answer("Повертаю в меню 👇", reply_markup=get_main_menu())
         return
 
     await ritual_delay(message)
-    await message.answer(
-        "*Кельтський хрест*\n\n"
-        "Невдовзі тут буде повний розклад на 10 карт. А поки — відчуй енергію розкладу ✨",
-        parse_mode="Markdown",
+
+    cards = draw_unique_cards(10)
+
+    media = []
+    for (code, orient, path) in cards:
+        if os.path.exists(path):
+            media.append(types.InputMediaPhoto(media=FSInputFile(path)))
+    if media:
+        await message.answer_media_group(media)
+
+    text = (
+        "*✨ Кельтський хрест — повне ворожіння*\n"
+        f"*Запит:* _{md_escape(question)}_\n\n"
     )
+
+    for i, (code, orient, path) in enumerate(cards):
+        emoji = "✨" if orient == "up" else "🌙"
+        text += (
+            f"{CELTIC_CROSS_POSITIONS[i]}\n"
+            f"{emoji} *{NAMES.get(code, code)}* {'(пряма)' if orient == 'up' else '(перевернута)'}\n"
+            f"{MEANINGS.get(code, {}).get(orient, '—')}\n\n"
+        )
+
+    text += "🧿 *Порада:* дивись на 1↔2 (конфлікт), 3↔5 (корінь↔намір), 7↔8 (ти↔оточення)."
+
+    # Telegram лимит — режем по частям
+    chunk = 3500
+    for i in range(0, len(text), chunk):
+        await message.answer(text[i:i+chunk], parse_mode="Markdown")
+
+    await message.answer("Готово ✨", reply_markup=get_main_menu())
 
 
 @dp.message(F.text == "❓ Так / Ні — швидка відповідь")
