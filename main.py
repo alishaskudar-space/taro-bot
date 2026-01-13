@@ -961,7 +961,6 @@ async def three_cards(message: types.Message):
 
 
 @dp.message(F.text == "✨ Кельтський хрест — повне ворожіння")
-@dp.message(F.text == "✨ Кельтський хрест — повне ворожіння")
 async def celtic_cross_start(message: types.Message):
     st = await get_user_state(message.from_user.id)
 
