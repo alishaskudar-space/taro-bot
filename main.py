@@ -30,6 +30,38 @@ if not PROVIDER_TOKEN:
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
+# === DEV / ADMIN ===
+DEV_MODE = os.getenv("DEV_MODE", "0") == "1"
+ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()}
+
+def is_admin(user_id: int) -> bool:
+    return DEV_MODE or (user_id in ADMIN_IDS)
+
+
+@dp.message(Command("id"))
+async def cmd_id(message: types.Message):
+    await message.answer(f"Your Telegram ID: `{message.from_user.id}`", parse_mode="Markdown")
+
+
+@dp.message(Command("grant_me"))
+async def cmd_grant_me(message: types.Message):
+    uid = message.from_user.id
+    if not is_admin(uid):
+        return
+    st = await add_credits(uid, credits=999, natal=True)
+    await message.answer(f"✅ Test access granted\ncredits={st['credits']}\nnatal={st['natal']}")
+
+
+@dp.message(Command("reset_me"))
+async def cmd_reset_me(message: types.Message):
+    uid = message.from_user.id
+    if not is_admin(uid):
+        return
+    async with _state_lock:
+        _state[str(uid)] = _default_user_state()
+    await save_state()
+    await message.answer("♻️ Reset OK")
+
 
 CARDS_FOLDER = "cards"
 
